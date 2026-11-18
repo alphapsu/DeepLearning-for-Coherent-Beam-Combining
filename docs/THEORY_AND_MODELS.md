@@ -111,7 +111,7 @@ class SharedTrunkReferenceNet(nn.Module):
 
 ---
 
-## 3. 압축 경량 모델 구조 (`ERM-24 / 32 / 48`, 6단계)
+## 3. 압축 경량 모델 구조 (`Ch24 / 32 / 48`, 6단계)
 
 유효 자유도 분석 결과($r_{\text{eff}} = 7.56$)를 바탕으로 불필요한 후반부와 과잉 특징 맵을 제거한 **Effective-Rank Matched (`ERM`)** 구조는 다음 3가지 원칙으로 설계되었습니다:
 
@@ -119,9 +119,9 @@ class SharedTrunkReferenceNet(nn.Module):
 2. **공간 해상도 보존 (`1/32 → 1/16`):** `8×8` 다운샘플링을 없애고 **`16×16` 공간 격자를 유지**하여 비초점면 빔 사이의 미세 간섭 줄무늬 해상도를 보존.
 3. **특징 맵 개수 압축 (`576 → 24 / 32 / 48개`):** 유효 자유도(`7.56`)의 약 `3~6배` 수준으로 특징 차원을 직접 매칭해 비활성 필터 없이 고효율 연산 달성.
 
-### 3.1 `ERM-32` 레이어별 상세 구조 (`1 × 256 × 256` 입력 기준)
+### 3.1 `Ch32` 레이어별 상세 구조 (`1 × 256 × 256` 입력 기준)
 
-| 단계 (Stage) | 역할 구분 | 연산 구성 `(in_c → exp_c → out_c, k, s)` | 출력 크기 `(C, H, W)` | 공간 축소율 | 파라미터 수 (`ERM-32`) |
+| 단계 (Stage) | 역할 구분 | 연산 구성 `(in_c → exp_c → out_c, k, s)` | 출력 크기 `(C, H, W)` | 공간 축소율 | 파라미터 수 (`Ch32`) |
 | :---: | :---: | :--- | :---: | :---: | :---: |
 | **Stage 0** | 거리별 입력 | `Conv2d(1→16, k=3, s=2) + BN + Hardswish` | `(16, 128, 128)` | `1/2` | `176` |
 | **Stage 1** | 거리별 입력 | `InvertedResidual(16→24→16, k=3, s=2, ReLU)` | `(16, 64, 64)` | `1/4` | `1,112` (거리별 합계 `1,288`) |
@@ -133,7 +133,7 @@ class SharedTrunkReferenceNet(nn.Module):
 
 - **단일 거리 배포 파라미터:** `1,288 + 26,014 = 27,302` (`27.3K`, 기준 단일 모델 `930.2K` 대비 **-97.1%**)
 - **5-거리 통합 파라미터:** `5 × 1,288 + 26,014 = 32,454` (`32.5K`, 기준 통합 모델 `1,005.9K` 대비 **-96.8%**)
-- `ERM-24` (`16→24→24` 최종 `24`개) 및 `ERM-48` (`24→32→48` 최종 `48`개)은 `Stage 2~5` 채널 폭만 조정한 동일 6단계 구조입니다.
+- `Ch24` (`16→24→24` 최종 `24`개) 및 `Ch48` (`24→32→48` 최종 `48`개)은 `Stage 2~5` 채널 폭만 조정한 동일 6단계 구조입니다.
 
 ### 3.2 `ERM` 경량 모델 구현 예시 (PyTorch)
 
@@ -145,17 +145,17 @@ from torchvision.ops.misc import Conv2dNormActivation
 
 ERM_CONFIGS = {
     # (in_c, kernel, exp_c, out_c, use_se, act, stride)
-    "ERM-24": (24, [(16, 3, 32, 16, False, "RE", 2), (16, 5, 32, 24, True, "HS", 1),
+    "Ch24": (24, [(16, 3, 32, 16, False, "RE", 2), (16, 5, 32, 24, True, "HS", 1),
                     (24, 5, 48, 24, True, "HS", 2),  (24, 5, 48, 24, True, "HS", 1)]),
-    "ERM-32": (32, [(16, 3, 48, 24, False, "RE", 2), (24, 5, 48, 24, True, "HS", 1),
+    "Ch32": (32, [(16, 3, 48, 24, False, "RE", 2), (24, 5, 48, 24, True, "HS", 1),
                     (24, 5, 72, 32, True, "HS", 2),  (32, 5, 64, 32, True, "HS", 1)]),
-    "ERM-48": (48, [(16, 3, 48, 24, False, "RE", 2), (24, 5, 72, 32, True, "HS", 1),
+    "Ch48": (48, [(16, 3, 48, 24, False, "RE", 2), (24, 5, 72, 32, True, "HS", 1),
                     (32, 5, 96, 48, True, "HS", 2),  (48, 5, 96, 48, True, "HS", 1)]),
 }
 
 class EffectiveRankNet(nn.Module):
-    """6단계 1/16 스케일 경량 위상 복원 네트워크 (ERM-24 / 32 / 48)."""
-    def __init__(self, distance_keys=("d5", "d25", "d50", "d75", "d100"), arch="ERM-32", teacher_dim=576):
+    """6단계 1/16 스케일 경량 위상 복원 네트워크 (Ch24 / 32 / 48)."""
+    def __init__(self, distance_keys=("d5", "d25", "d50", "d75", "d100"), arch="Ch32", teacher_dim=576):
         super().__init__()
         last_ch, trunk_specs = ERM_CONFIGS[arch]
         self.stems = nn.ModuleDict({
@@ -185,16 +185,16 @@ class EffectiveRankNet(nn.Module):
 
 ## 4. 핵심 분석 및 압축 방법론 (이론 + 실행 가능한 예제 코드)
 
-### 4.1 특징 공간 PCA · 폰 노이만 엔트로피 · 유효 자유도 ($r_{\text{eff}}$) 및 정보 효율 ($\eta_{\text{info}}$)
+### 4.1 특징 공간 PCA · 고유값 분포 섀넌 엔트로피 · 유효 자유도 ($r_{\text{eff}}$) 및 정보 효율 ($\eta_{\text{info}}$)
 
 네트워크 마지막 풀링(GAP) 특징 행렬 $\mathbf{X} \in \mathbb{R}^{N \times D}$ ($N$개 샘플, $D$개 특징 맵)의 평균을 제거한 $\tilde{\mathbf{X}} = \mathbf{X} - \bar{\mathbf{X}}$ 로부터 표본 공분산 행렬을 구합니다:
 
 $$\mathbf{C} = \frac{1}{N - 1}\tilde{\mathbf{X}}^\top \tilde{\mathbf{X}} \in \mathbb{R}^{D \times D}, \qquad p_i = \frac{\lambda_i}{\sum_{j=1}^{D}\lambda_j} \quad (\lambda_i: \mathbf{C}\text{의 고유값})$$
 
-- **폰 노이만(스펙트럼) 엔트로피 & 유효 자유도 (Effective Rank, Roy & Vetterli 2007 [4]):**
-  $$S_{\text{vN}} = -\sum_{p_i > 0} p_i \ln p_i, \qquad r_{\text{eff}} = \exp(S_{\text{vN}})$$
+- **고유값 분포 섀넌 엔트로피 & 유효 자유도 (Effective Rank, Roy & Vetterli 2007 [4]):**
+  $$H = -\sum_{p_i > 0} p_i \ln p_i, \qquad r_{\text{eff}} = \exp(H)$$
   특징 차원이 `D=576`이더라도 대부분의 에너지가 소수 고유모드에 몰려 있으면 $r_{\text{eff}} \ll D$가 되며, 반대로 비중심 그람 행렬 $\mathbf{G} = \frac{1}{N}\mathbf{X}^\top\mathbf{X}$를 쓰면 표현 붕괴 진단 지표인 **RankMe (Garrido et al. 2023 [5])**가 됩니다.
-- **정보 활용 효율 (Normalized Entropy):** $\eta_{\text{info}} = \frac{S_{\text{vN}}}{\ln D} \times 100\%$ 로, 전체 채널 용량 중 실질적 정보 표현에 쓰이는 비율을 뜻합니다 (`576`차원 `31.8%` → `ERM-32` `57.8%`).
+- **정보 활용 효율 (Normalized Entropy):** $\eta_{\text{info}} = \frac{H}{\ln D} \times 100\%$ 로, 전체 채널 용량 중 실질적 정보 표현에 쓰이는 비율을 뜻합니다 (`576`차원 `31.8%` → `Ch32` `57.8%`).
 
 ```python
 import numpy as np
@@ -286,14 +286,14 @@ def distillation_step_loss(s_pred, y_true, t_pred, s_proj, t_gap):
     return l_task + 0.5 * l_kd + 0.1 * l_feat
 
 # CPU 단일 프레임 추론 지연시간 측정 예시 (PyTorch 기준; 배포 시 ONNX Runtime 권장)
-erm32 = EffectiveRankNet(arch="ERM-32").eval()
+ch32 = EffectiveRankNet(arch="Ch32").eval()
 dummy_in = torch.randn(1, 1, 256, 256)
 with torch.no_grad():
     for _ in range(20):
-        _ = erm32(dummy_in, "d50")
+        _ = ch32(dummy_in, "d50")
     t0 = time.perf_counter()
     for _ in range(100):
-        _ = erm32(dummy_in, "d50")
+        _ = ch32(dummy_in, "d50")
     avg_ms = (time.perf_counter() - t0) / 100 * 1000.0
 print(f"PyTorch CPU avg latency: {avg_ms:.3f} ms ({1000.0/avg_ms:.1f} Hz)")
 ```
@@ -306,9 +306,9 @@ print(f"PyTorch CPU avg latency: {avg_ms:.3f} ms ({1000.0/avg_ms:.1f} Hz)")
 | :--- | :---: | :---: | :---: | :---: | :---: | :---: | :---: | :---: |
 | **Ref. (`576`, 13단)** | `1,005.9K` | `930.2K` | `8.17°` | `0.9721` | `7.56` | `31.8%` | - | `1.180 ms` (`847 Hz`) |
 | **Mid (`64`)** | `286.0K` | `266.8K` | `8.07°` | - | `10.32` | `56.1%` | - | `0.733 ms` (`1,364 Hz`) |
-| **ERM-48 (6단)** | `51.2K` | `46.0K` | `9.33°` | `0.9580` | `7.31` | `51.4%` | `99.85%` | `0.392 ms` (`2,550 Hz`) |
-| **ERM-32 (6단, 권장)** | **`32.5K`** | **`27.3K`** | **`10.48°`** | **`0.9454`** | **`7.40`** | **`57.8%`** | **`99.87%`** | **`0.313 ms` (`3,196 Hz`)** |
-| **ERM-24 (6단)** | `21.6K` | `16.4K` | `12.31°` | `0.9281` | `7.25` | `62.3%` | `99.88%` | `0.271 ms` (`3,693 Hz`) |
+| **Ch48 (6단)** | `51.2K` | `46.0K` | `9.33°` | `0.9580` | `7.31` | `51.4%` | `99.85%` | `0.392 ms` (`2,550 Hz`) |
+| **Ch32 (6단, 권장)** | **`32.5K`** | **`27.3K`** | **`10.48°`** | **`0.9454`** | **`7.40`** | **`57.8%`** | **`99.87%`** | **`0.313 ms` (`3,196 Hz`)** |
+| **Ch24 (6단)** | `21.6K` | `16.4K` | `12.31°` | `0.9281` | `7.25` | `62.3%` | `99.88%` | `0.271 ms` (`3,693 Hz`) |
 
 ---
 

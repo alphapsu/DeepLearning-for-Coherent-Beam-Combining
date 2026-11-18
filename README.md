@@ -1,50 +1,110 @@
-# 비초점면 단일 스텝 위상 복원 및 유효 자유도 기반 경량화 (CBC)
+# Deep Learning for Single-Step Phase Optimization in Coherent Beam Combining
 
-7-빔 결맞음 빔 결합(Coherent Beam Combining, CBC) 간섭 무늬 1장으로부터 단일 스텝으로 상대 위상을 추론하는 딥러닝 모델의 **구조·분석 이론·실행 예제 코드**를 정리한 저장소입니다.
+**Mobile-friendly companion guide** to our poster:
+> **Deep learning for single-step phase optimization in coherent beam combining**  
+> Sang-Eon Park¹, Sungmin Park¹, Dong-Il Yeom¹,*  
+> ¹Department of Energy Systems Research, Ajou University (`*diyeom@ajou.ac.kr`)
 
-> 상세한 레이어별 명세와 수식 유도·PyTorch 구현은 [`docs/THEORY_AND_MODELS.md`](docs/THEORY_AND_MODELS.md)를 참고하세요.
-
----
-
-## 1. 분석 방법 및 핵심 이론 요약
-
-1. **초점면 켤레 대칭 모호성 & 비초점면 대칭 깨짐**
-   - 초점면($\Delta z = 0\text{ mm}$)에서는 중심 반전 대칭 $I(\mathbf{r}; -\boldsymbol{\phi}) = I(-\mathbf{r}; +\boldsymbol{\phi})$ 으로 인해 위상 부호를 구분할 수 없습니다.
-   - 비초점면($\Delta z = +25\sim+100\text{ mm}$)에서는 프레넬 회절 이차 위상항 $\exp(ikr^2/2\Delta z)$ 이 대칭을 깨뜨려 단일 영상만으로 고정밀 위상 복원($\text{MAE } 4.35^\circ\text{--}6.11^\circ$, $\text{Strehl } \ge 0.984$)이 가능합니다.
-
-2. **다중 거리 가중치 공유 & 폰 노이만 유효 자유도 ($r_{\text{eff}}$)**
-   - 초기 5단계(2%)만 거리별로 분리하고 후반 8단계(98%) 가중치를 공유하여 공통 위상 다양체를 학습합니다.
-   - 576차원 요약 벡터 공분산 행렬 $\mathbf{C}$ 의 고유값 분포($p_i = \lambda_i / \sum_j \lambda_j$)로 계산한 폰 노이만 엔트로피와 유효 자유도는 **$r_{\text{eff}} = \exp(-\sum p_i \ln p_i) = 7.56$** 입니다(상위 7개 주성분 $\ge 90\%$).
-
-3. **푸리에 $k$-공간 브래그 격자 보존 ($1/32 \to 1/16$)**
-   - 7-빔 간섭 무늬의 핵심 브래그 캐리어 피크는 $k^* = 7\text{ cyc/img}$ (90% 에너지 대역 $13\text{--}19\text{ cyc/img}$)에 위치합니다.
-   - 기존 $8\times 8$ 다운샘플링(나이퀴스트 한계 $4\text{ cyc/img}$) 대신 **$16\times 16$ 공간 해상도($8\text{ cyc/img}$)를 유지**하여 간섭 줄무늬 손실을 방지합니다.
-
-4. **APoZ 비활성 필터 진단 & 특징·예측 지식 증류(KD)**
-   - 기준 모델(`Ref. 576`) 마지막 블록은 `68.9%` 필터가 비활성 상태입니다. `ERM-32`는 `6단계 · 32채널`로 압축하고 특징 정렬 + 출력 전수 증류를 적용해 **비활성 `0%` (`99.87%` 활성)** 를 달성했습니다.
+This public repository provides the **physical intuition, lightweight compression methodology, visualizations, required libraries, references, and dataset-independent PyTorch example code** so researchers can reproduce and adapt the approach to their own multi-beam systems. *(No proprietary experimental datasets or private weights are included.)*
 
 ---
 
-## 2. 모델 성능 요약 (`Ryzen 7 9800X3D`, ONNX FP32 4T)
+## 1. Visual Overview & Core Theory
 
-| 모델 | 단일 파라미터 (메모리) | 실용 오차 (`+50~100 mm`) | 결합 스트렐 비 (전체) | CPU 추론 시간 (속도) |
+### ① Breaking Twin-Image Ambiguity via Defocus ($\Delta z$)
+At the focal plane ($\Delta z = 0\text{ mm}$), inversion symmetry $I(\mathbf{r}; -\boldsymbol{\phi}) = I(-\mathbf{r}; +\boldsymbol{\phi})$ makes conjugate phase signs indistinguishable (`MAE 32.51°`). Introducing a physical defocus ($\Delta z = +25\text{ to }+100\text{ mm}$) adds a quadratic Fresnel phase term $\exp(ikr^2 / 2\Delta z)$ that breaks this symmetry, enabling single-frame phase retrieval (`MAE 4.35°–6.11°`, `Strehl ≥ 0.984`).
+
+![Defocus-Dependent Phase Retrieval](assets/fig3_defocus_distance.png)
+
+---
+
+### ② Shared Learning & Effective Rank ($r_{\mathrm{eff}} = 7.56$)
+Across defocus distances ($+5\text{ to }+100\text{ mm}$), only the first **5 input blocks (2% params)** need distance separation while the remaining **8 trunk blocks (98% params)** share weights.  
+From the $576\times 576$ feature covariance eigenvalues $\lambda_i$, the Shannon entropy $H$ gives the **effective number of active feature channels**:
+
+$$p_i = \frac{\lambda_i}{\sum_{j=1}^{576}\lambda_j}, \qquad H = -\sum_{i=1}^{576} p_i \ln p_i, \qquad r_{\mathrm{eff}} = \exp(H) = 7.56$$
+
+Over **90% of variance lies in just 7 principal components** (~98.7% channel redundancy).
+
+![Shared Learning & Effective Rank](assets/fig4_pca_effective_rank.png)
+
+---
+
+### ③ Physics-Guided Compression (`Ch32`) & Bragg Carrier Preservation
+Informed by $r_{\mathrm{eff}} = 7.56$ and the 2D Fourier $k$-space Bragg carrier peak ($k^* = 7\text{ cyc/img}$):
+- **Depth pruning (`13 → 6` blocks):** 2 distance-specific stem blocks + 4 shared trunk blocks.
+- **Spatial grid (`1/32 → 1/16`):** Preserves a $16\times 16$ spatial grid (Nyquist $8\text{ cyc/img} > k^*$), avoiding fringe-carrier aliasing caused by $8\times 8$ downsampling ($4\text{ cyc/img}$).
+- **Channel pruning (`576 → 32`) + Dual KD:** Eliminates `68.9%` dead filters in the baseline down to **`0%` dead (`99.87%` active)** via Feature KD + Output KD.
+
+![Ref. 576 vs Ch32 Architecture & Fourier Bragg Proof](assets/fig5_erm_architecture.png)
+
+---
+
+## 2. Benchmark Summary (`AMD Ryzen 7 9800X3D`, ONNX FP32, 4 Threads)
+
+| Model | Weights (Memory) | Phase Error (`+50~100 mm`) | Strehl (`+50~100 mm` / All) | CPU Latency (Speed) |
 | :--- | :---: | :---: | :---: | :---: |
-| **Ref. 576 (13단)** | `930.2K` (`3.72 MB`) | `4.97°~7.07°` (`평균 8.17°`) | `0.978~0.991` (`0.972`) | `1.180 ms` (`0.85 kHz`) |
-| **ERM-48 (6단)** | `46.0K` (`184 KB`) | `6.83°~7.43°` (`≈ λ/50`) | `0.973~0.978` (`0.958`) | `0.392 ms` (`2.55 kHz`) |
-| **ERM-32 (핵심 제안)** | **`27.3K` (`109 KB`)** | **`7.40°~8.24°` (`≈ λ/46`)** | **`0.965~0.972` (`0.945`)** | **`0.313 ms` (`3.20 kHz`)** |
-| **ERM-24 (6단)** | `16.4K` (`66 KB`) | `8.43°~9.31°` (`≈ λ/40`) | `0.960~0.964` (`0.928`) | `0.271 ms` (`3.69 kHz`) |
+| **Baseline (Ref. 576)** | `930.2K` (`3.72 MB`) | `4.97°~7.07°` (`avg 8.17°`) | `0.978~0.991` (`0.972`) | `1.180 ms` (`0.85 kHz`) |
+| **Ch48 (High-Acc.)** | `46.0K` (`184 KB`) | `6.83°~7.43°` (`≈ λ/50`) | `0.973~0.978` (`0.958`) | `0.392 ms` (`2.55 kHz`) |
+| **Ch32 (Proposed)** | **`27.3K` (`109 KB`)** | **`7.40°~8.24°` (`≈ λ/46`)** | **`0.965~0.972` (`0.945`)** | **`0.313 ms` (`3.20 kHz`)** |
+| **Ch24 (Ultra-Light)** | `16.4K` (`66 KB`) | `8.43°~9.31°` (`≈ λ/40`) | `0.960~0.964` (`0.928`) | `0.271 ms` (`3.69 kHz`) |
+
+![Performance & Real-Time Speed Benchmark](assets/fig6_pareto_results.png)
 
 ---
 
-## 3. 빠른 코드 실행
+## 3. Generic Code & Required Libraries
 
+### Requirements
 ```bash
 pip install -r requirements.txt
+```
+- `torch >= 2.1.0`
+- `torchvision >= 0.16.0`
+- `numpy >= 1.24.0`
+
+### Run Standalone Demo (No Dataset Required)
+[`scripts/analyze_models_demo.py`](scripts/analyze_models_demo.py) runs out-of-the-box on synthetic tensors to demonstrate:
+1. Parameter comparison (`Ref. 576` vs. `Ch48` / `Ch32` / `Ch24`)
+2. Periodic cosine phase loss $L(\Delta\phi) = 2 - 2\cos\Delta\phi$ & 7-beam Strehl metric
+3. Effective rank ($r_{\mathrm{eff}} = \exp(H)$), PCA cumulative variance, and Linear CKA
+4. Single-frame PyTorch CPU inference latency
+
+```bash
 python scripts/analyze_models_demo.py
 ```
 
-`scripts/analyze_models_demo.py`는 별도 데이터셋 파일 없이도 바로 실행 가능하며 다음을 검증합니다:
-- 기준 모델(`Ref. 576`) vs 경량 모델(`ERM-24 / 32 / 48`) 파라미터 수 비교
-- 주기 위상 코사인 손실 및 7-빔 광학 스트렐 비 계산
-- 유효 자유도($r_{\text{eff}}$), PCA 누적 분산, 선형 CKA, 2D 푸리에 $k$-공간 에너지 비율 분석
-- CPU 단일 프레임 추론 지연시간 측정
+<details>
+<summary><b>Minimal PyTorch Usage Snippet (Click to expand)</b></summary>
+
+```python
+import torch
+from scripts.analyze_models_demo import (
+    EffectiveRankNet,
+    cyclical_phase_loss,
+    analyze_effective_rank_and_pca,
+)
+
+# 1. Instantiate lightweight Ch32 model (for single- or multi-distance stems)
+model = EffectiveRankNet(distance_keys=("d50",), arch="Ch32").eval()
+fringe = torch.randn(1, 1, 256, 256)          # synthetic 256x256 grayscale fringe
+pred_rad, feat, feat_proj = model(fringe, "d50", return_features=True)
+
+# 2. Periodic 2*pi phase loss
+target_rad = torch.zeros_like(pred_rad)
+loss = cyclical_phase_loss(pred_rad, target_rad)
+```
+
+</details>
+
+> For full layer-by-layer specifications and derivations, see [`docs/THEORY_AND_MODELS.md`](docs/THEORY_AND_MODELS.md).
+
+---
+
+## 4. References
+
+- **[1]** P. Zhou et al., *"Review of Coherent Laser Beam Combining Research Progress in the Past Decade,"* Chin. J. Lasers **48**(4), 0401003 (2021). [DOI: 10.3788/CJL202148.0401003](https://doi.org/10.3788/CJL202148.0401003)
+- **[2]** H. Jia et al., *"Deep learning-based phase retrieval / CBC,"* Optik **246**, 167827 (2021). [DOI: 10.1016/j.ijleo.2021.167827](https://doi.org/10.1016/j.ijleo.2021.167827)
+- **[3]** Y. Xie et al., *"Single-step phase identification and phase locking for coherent beam combination using deep learning,"* Sci. Rep. **14**, 7501 (2024). [DOI: 10.1038/s41598-024-58118-3](https://doi.org/10.1038/s41598-024-58118-3)
+- **[4]** O. Roy & M. Vetterli, *"The effective rank: A measure of effective dimensionality,"* Proc. EUSIPCO, 606–610 (2007). [EURASIP / IEEE](https://ieeexplore.ieee.org/document/7098875)
+- **[5]** Q. Garrido et al., *"RankMe: Assessing the downstream performance of pretrained self-supervised representations by their rank,"* ICML, PMLR **202**, 10929–10974 (2023). [PMLR Link](https://proceedings.mlr.press/v202/garrido23a.html)

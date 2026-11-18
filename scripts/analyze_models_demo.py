@@ -56,19 +56,19 @@ class SharedTrunkReferenceNet(nn.Module):
 
 
 ERM_CONFIGS = {
-    "ERM-24": (24, [(16, 3, 32, 16, False, "RE", 2), (16, 5, 32, 24, True, "HS", 1),
+    "Ch24": (24, [(16, 3, 32, 16, False, "RE", 2), (16, 5, 32, 24, True, "HS", 1),
                     (24, 5, 48, 24, True, "HS", 2), (24, 5, 48, 24, True, "HS", 1)]),
-    "ERM-32": (32, [(16, 3, 48, 24, False, "RE", 2), (24, 5, 48, 24, True, "HS", 1),
+    "Ch32": (32, [(16, 3, 48, 24, False, "RE", 2), (24, 5, 48, 24, True, "HS", 1),
                     (24, 5, 72, 32, True, "HS", 2), (32, 5, 64, 32, True, "HS", 1)]),
-    "ERM-48": (48, [(16, 3, 48, 24, False, "RE", 2), (24, 5, 72, 32, True, "HS", 1),
+    "Ch48": (48, [(16, 3, 48, 24, False, "RE", 2), (24, 5, 72, 32, True, "HS", 1),
                     (32, 5, 96, 48, True, "HS", 2), (48, 5, 96, 48, True, "HS", 1)]),
 }
 
 
 class EffectiveRankNet(nn.Module):
-    """6단계 1/16(16x16) 스케일 경량 위상 복원 네트워크 (ERM-24 / 32 / 48)."""
+    """Compact 6-block 1/16 (16x16) phase retrieval network (Ch24 / Ch32 / Ch48)."""
 
-    def __init__(self, distance_keys=("d5", "d25", "d50", "d75", "d100"), arch="ERM-32", teacher_dim=576):
+    def __init__(self, distance_keys=("d5", "d25", "d50", "d75", "d100"), arch="Ch32", teacher_dim=576):
         super().__init__()
         last_ch, trunk_specs = ERM_CONFIGS[arch]
         self.stems = nn.ModuleDict({
@@ -94,13 +94,13 @@ class EffectiveRankNet(nn.Module):
 
 
 def analyze_effective_rank_and_pca(features: np.ndarray, active_thresh: float = 1e-3):
-    """폰 노이만 엔트로피 유효 자유도(r_eff), RankMe, 정보 효율(%), 비활성 필터 수 계산."""
+    """Compute Shannon-entropy effective rank (r_eff), RankMe, info efficiency (%), and dead filters."""
     N, D = features.shape
     X_c = features - features.mean(axis=0, keepdims=True)
     eigvals = np.maximum(np.linalg.eigvalsh((X_c.T @ X_c) / (N - 1))[::-1], 0.0)
     p = eigvals / (eigvals.sum() + 1e-15)
     p_nz = p[p > 1e-15]
-    s_vn = float(-np.sum(p_nz * np.log(p_nz)))
+    h_ent = float(-np.sum(p_nz * np.log(p_nz)))
 
     gram = (features.T @ features) / N
     eig_raw = np.maximum(np.linalg.eigvalsh(gram)[::-1], 0.0)
@@ -109,8 +109,8 @@ def analyze_effective_rank_and_pca(features: np.ndarray, active_thresh: float = 
 
     active_frac = (np.abs(features) > active_thresh).mean(axis=0)
     return {
-        "r_eff": float(np.exp(s_vn)),
-        "info_efficiency_pct": float(s_vn / np.log(D) * 100.0),
+        "r_eff": float(np.exp(h_ent)),
+        "info_efficiency_pct": float(h_ent / np.log(D) * 100.0),
         "rankme": float(np.exp(-np.sum(p_raw_nz * np.log(p_raw_nz)))),
         "pc_for_90pct": int(np.searchsorted(np.cumsum(p) * 100.0, 90.0) + 1),
         "dead_filters": int((active_frac < 0.20).sum()),
@@ -135,34 +135,34 @@ def count_single_deploy_params(model: nn.Module, dist_key: str = "d50") -> int:
 
 
 def main():
-    print("=== 1. 모델 파라미터 비교 (단일 거리 배포 기준) ===")
+    print("=== 1. Parameter Comparison (Single-Distance Deployment) ===")
     ref = SharedTrunkReferenceNet().eval()
-    print(f"Ref. 576 (13단): {count_single_deploy_params(ref):,} params")
-    for arch in ("ERM-48", "ERM-32", "ERM-24"):
+    print(f"Ref. 576 (13-block): {count_single_deploy_params(ref):,} params")
+    for arch in ("Ch48", "Ch32", "Ch24"):
         m = EffectiveRankNet(arch=arch).eval()
-        print(f"{arch} (6단): {count_single_deploy_params(m):,} params")
+        print(f"{arch} (6-block): {count_single_deploy_params(m):,} params")
 
-    print("\n=== 2. 유효 자유도(r_eff) 및 CKA 분석 데모 ===")
+    print("\n=== 2. Effective Rank (r_eff) & CKA Demo (Synthetic) ===")
     rng = np.random.default_rng(42)
     latent = rng.normal(size=(2000, 7))
     proj = rng.normal(size=(7, 576))
     synth_gap = latent @ proj + 0.03 * rng.normal(size=(2000, 576))
-    print("저랭크 576-D 특징 진단:", analyze_effective_rank_and_pca(synth_gap))
+    print("Low-rank 576-D feature diagnostics:", analyze_effective_rank_and_pca(synth_gap))
     q, _ = np.linalg.qr(rng.normal(size=(32, 32)))
     a = rng.normal(size=(400, 32))
-    print("직교 회전 CKA:", round(linear_cka(a, a @ q), 4))
+    print("Orthogonal-rotation CKA:", round(linear_cka(a, a @ q), 4))
 
-    print("\n=== 3. CPU 단일 프레임 추론 지연시간 (PyTorch) ===")
-    erm32 = EffectiveRankNet(arch="ERM-32").eval()
+    print("\n=== 3. Single-Frame PyTorch CPU Latency ===")
+    ch32 = EffectiveRankNet(arch="Ch32").eval()
     x = torch.randn(1, 1, 256, 256)
     with torch.no_grad():
         for _ in range(15):
-            _ = erm32(x, "d50")
+            _ = ch32(x, "d50")
         t0 = time.perf_counter()
         for _ in range(60):
-            _ = erm32(x, "d50")
+            _ = ch32(x, "d50")
         ms = (time.perf_counter() - t0) / 60 * 1000.0
-    print(f"ERM-32 PyTorch CPU avg: {ms:.3f} ms ({1000.0 / ms:.1f} Hz)")
+    print(f"Ch32 PyTorch CPU avg: {ms:.3f} ms ({1000.0 / ms:.1f} Hz)")
 
 
 if __name__ == "__main__":
