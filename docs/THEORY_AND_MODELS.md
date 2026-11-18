@@ -247,29 +247,7 @@ synthetic_gap = latent @ proj + 0.03 * rng.normal(size=(2000, 576))
 print(analyze_effective_rank_and_pca(synthetic_gap))
 ```
 
-### 4.2 다중 거리 표현 정렬 검증: 선형 CKA (Centered Kernel Alignment)
-서로 다른 비초점 거리(예: `+5 mm` vs `+100 mm`)에서 추출한 중간층 특징 $\mathbf{A} \in \mathbb{R}^{N \times d_1}, \mathbf{B} \in \mathbb{R}^{N \times d_2}$ 가 회전·스케일 변환을 제외하고 동일한 위상 다양체를 학습했는지 검증할 때 사용합니다:
-
-$$\text{CKA}(\mathbf{A}, \mathbf{B}) = \frac{\|\tilde{\mathbf{A}}^\top \tilde{\mathbf{B}}\|_F^2}{\|\tilde{\mathbf{A}}^\top \tilde{\mathbf{A}}\|_F \, \|\tilde{\mathbf{B}}^\top \tilde{\mathbf{B}}\|_F} \in [0, 1]$$
-
-```python
-def linear_cka(A: np.ndarray, B: np.ndarray) -> float:
-    """서로 다른 거리/모델의 중간 특징 공간 간 회전 불변 표현 유사도 (0~1)."""
-    A_c = A - A.mean(axis=0, keepdims=True)
-    B_c = B - B.mean(axis=0, keepdims=True)
-    cross = np.linalg.norm(A_c.T @ B_c, ord="fro") ** 2
-    norm_a = np.linalg.norm(A_c.T @ A_c, ord="fro")
-    norm_b = np.linalg.norm(B_c.T @ B_c, ord="fro")
-    return float(cross / (norm_a * norm_b + 1e-12))
-
-# 직교 회전(R)만 다른 동일 위상 표현이라면 CKA는 ~1.0
-Q, _ = np.linalg.qr(rng.normal(size=(64, 64)))
-feat_dist1 = rng.normal(size=(500, 64))
-feat_dist2 = feat_dist1 @ Q
-print("Rotated CKA:", round(linear_cka(feat_dist1, feat_dist2), 4))
-```
-
-### 4.3 특징·예측 전수 지식 증류(KD) 및 CPU 추론 속도 측정
+### 4.2 특징·예측 전수 지식 증류(KD) 및 CPU 추론 속도 측정
 소형 학생 모델(`ERM`)은 정답 라벨 학습 손실 $\mathcal{L}_{\text{task}}$ 외에, 대형 기준 모델의 위상 예측값 $\hat{\boldsymbol{\phi}}_T$ 와 요약 특징 벡터 $\mathbf{z}_T$ 를 동시에 추종하여 경량화에 따른 정확도 손실을 억제합니다:
 
 $$\mathcal{L} = \mathcal{L}_{\text{cos}}(\hat{\boldsymbol{\phi}}_S, \boldsymbol{\phi}) + 0.5\,\mathcal{L}_{\text{cos}}(\hat{\boldsymbol{\phi}}_S, \hat{\boldsymbol{\phi}}_T) + 0.1\Big(1 - \cos(\mathbf{P}\mathbf{z}_S, \mathbf{z}_T)\Big)$$

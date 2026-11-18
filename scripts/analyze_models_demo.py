@@ -113,17 +113,8 @@ def analyze_effective_rank_and_pca(features: np.ndarray, active_thresh: float = 
         "info_efficiency_pct": float(h_ent / np.log(D) * 100.0),
         "rankme": float(np.exp(-np.sum(p_raw_nz * np.log(p_raw_nz)))),
         "pc_for_90pct": int(np.searchsorted(np.cumsum(p) * 100.0, 90.0) + 1),
-        "dead_filters": int((active_frac < 0.20).sum()),
+        "mean_active_pct": float(active_frac.mean() * 100.0),
     }
-
-
-def linear_cka(A: np.ndarray, B: np.ndarray) -> float:
-    """회전 불변 표현 유사도 (Linear CKA)."""
-    A_c = A - A.mean(axis=0, keepdims=True)
-    B_c = B - B.mean(axis=0, keepdims=True)
-    num = np.linalg.norm(A_c.T @ B_c, ord="fro") ** 2
-    den = np.linalg.norm(A_c.T @ A_c, ord="fro") * np.linalg.norm(B_c.T @ B_c, ord="fro")
-    return float(num / (den + 1e-12))
 
 
 def count_single_deploy_params(model: nn.Module, dist_key: str = "d50") -> int:
@@ -142,15 +133,12 @@ def main():
         m = EffectiveRankNet(arch=arch).eval()
         print(f"{arch} (6-block): {count_single_deploy_params(m):,} params")
 
-    print("\n=== 2. Effective Rank (r_eff) & CKA Demo (Synthetic) ===")
+    print("\n=== 2. Effective Rank (r_eff) Demo (Synthetic) ===")
     rng = np.random.default_rng(42)
     latent = rng.normal(size=(2000, 7))
     proj = rng.normal(size=(7, 576))
     synth_gap = latent @ proj + 0.03 * rng.normal(size=(2000, 576))
     print("Low-rank 576-D feature diagnostics:", analyze_effective_rank_and_pca(synth_gap))
-    q, _ = np.linalg.qr(rng.normal(size=(32, 32)))
-    a = rng.normal(size=(400, 32))
-    print("Orthogonal-rotation CKA:", round(linear_cka(a, a @ q), 4))
 
     print("\n=== 3. Single-Frame PyTorch CPU Latency ===")
     ch32 = EffectiveRankNet(arch="Ch32").eval()

@@ -63,7 +63,7 @@ How we quantify feature-space redundancy from $N = 10{,}000$ validation frames a
 ![PCA & Effective Rank Analysis](assets/fig4_pca_effective_rank.png)
 
 <details>
-<summary><b>Generic NumPy Implementation: PCA, Shannon Entropy (r_eff), RankMe & Linear CKA</b></summary>
+<summary><b>Generic NumPy Implementation: PCA, Shannon Entropy (r_eff) & RankMe</b></summary>
 
 ```python
 import numpy as np
@@ -121,7 +121,7 @@ pip install -r requirements.txt
 ```bash
 python scripts/analyze_models_demo.py
 ```
-Verifies parameter counts (`Ref. 576` vs. `Ch48 / Ch32 / Ch24`), cyclical phase loss & Strehl metric, effective rank ($r_{\mathrm{eff}}$) on synthetic low-rank features, rotation-invariant Linear CKA, and single-frame PyTorch CPU latency.
+Verifies parameter counts (`Ref. 576` vs. `Ch48 / Ch32 / Ch24`), cyclical phase loss & Strehl metric, effective rank ($r_{\mathrm{eff}}$) on synthetic low-rank features, and single-frame PyTorch CPU latency.
 
 ---
 
