@@ -155,6 +155,40 @@ python benchmark.py --runs 200 --warmup 30 --threads 4 --device cpu --rank-demo
 
 ---
 
+## 4. 광학 셋업 · 손실 함수 · 지식 증류 (포스터 보충)
+
+포스터 지면상 생략한 세부 방법론입니다:
+
+- **광학 셋업**: `1064 nm` LD → 시준기 → HWP & PBS → 위상 전용 SLM(7-빔 blazed grating) → `f = 400 mm` 렌즈 → `90:10` BS → 이동 스테이지 위 카메라(`Δz = 0, +5, +25, +50, +75, +100 mm`; `256×256` 입력, 5개 비초점 거리 검증 데이터 `N = 10,000`).
+- **주기 $2\pi$ 코사인 손실 및 스트렐 비**:
+
+$$L_{\mathrm{cos}}(\hat{\boldsymbol{\phi}}, \boldsymbol{\phi}) = \frac{1}{6}\sum_{m=1}^{6}\big(2 - 2\cos(\phi_m - \hat{\phi}_m)\big), \qquad S = \frac{1}{49}\left|\sum_{b=0}^{6} e^{i(\phi_b - \hat{\phi}_b)}\right|^2 \quad (\phi_0 = \hat{\phi}_0 = 0)$$
+
+- **이중 지식 증류 (`Ref. 576 → Ch32`)**:
+
+$$L = L_{\mathrm{cos}}(\hat{\boldsymbol{\phi}}_S, \boldsymbol{\phi}) + 0.5\,L_{\mathrm{cos}}(\hat{\boldsymbol{\phi}}_S, \hat{\boldsymbol{\phi}}_T) + 0.1\big(1 - \cos(\mathbf{P}\mathbf{z}_S, \mathbf{z}_T)\big)$$
+
+$\mathbf{P}$ 는 학습 시 `32-D` 학생 GAP 벡터 $\mathbf{z}_S$ 를 `576-D` 교사 벡터 $\mathbf{z}_T$ 에 정렬하기 위한 선형 투영 행렬이며, 배포 시 제거됩니다.
+
+<details>
+<summary>PyTorch 코드: cyclical_phase_loss &amp; strehl_ratio</summary>
+
+```python
+import math, torch
+
+def cyclical_phase_loss(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    return torch.mean(2.0 - 2.0 * torch.cos(target - pred))
+
+def strehl_ratio(pred: torch.Tensor, target: torch.Tensor) -> float:
+    zeros = torch.zeros((pred.shape[0], 1), device=pred.device, dtype=pred.dtype)
+    err = torch.cat([zeros, target - pred], dim=1)
+    return float(((torch.cos(err).sum(dim=1) ** 2 + torch.sin(err).sum(dim=1) ** 2) / 49.0).mean())
+```
+
+</details>
+
+---
+
 ## 참고문헌
 
 - `[1]` O. Roy & M. Vetterli, "The effective rank: A measure of effective dimensionality," *Proc. EUSIPCO*, pp. 606–610 (2007).

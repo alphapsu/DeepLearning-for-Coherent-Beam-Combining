@@ -155,6 +155,40 @@ python benchmark.py --runs 200 --warmup 30 --threads 4 --device cpu --rank-demo
 
 ---
 
+## 4. Optical Setup, Loss & Knowledge Distillation (Poster Supplement)
+
+Details omitted from the poster for brevity:
+
+- **Optical setup**: `1064 nm` LD → collimator → HWP & PBS → phase-only SLM (7-beam blazed grating) → `f = 400 mm` focusing lens → `90:10` BS → camera on translating stage (`Δz = 0, +5, +25, +50, +75, +100 mm`; `256×256` input, `N = 10,000` validation frames across 5 defocused planes).
+- **Cyclical $2\pi$ loss & Strehl ratio**:
+
+$$L_{\mathrm{cos}}(\hat{\boldsymbol{\phi}}, \boldsymbol{\phi}) = \frac{1}{6}\sum_{m=1}^{6}\big(2 - 2\cos(\phi_m - \hat{\phi}_m)\big), \qquad S = \frac{1}{49}\left|\sum_{b=0}^{6} e^{i(\phi_b - \hat{\phi}_b)}\right|^2 \quad (\phi_0 = \hat{\phi}_0 = 0)$$
+
+- **Dual knowledge distillation (`Ref. 576 → Ch32`)**:
+
+$$L = L_{\mathrm{cos}}(\hat{\boldsymbol{\phi}}_S, \boldsymbol{\phi}) + 0.5\,L_{\mathrm{cos}}(\hat{\boldsymbol{\phi}}_S, \hat{\boldsymbol{\phi}}_T) + 0.1\big(1 - \cos(\mathbf{P}\mathbf{z}_S, \mathbf{z}_T)\big)$$
+
+where $\mathbf{P}$ linearly projects the `32-D` student GAP vector $\mathbf{z}_S$ to the `576-D` teacher vector $\mathbf{z}_T$ during training and is removed at deployment.
+
+<details>
+<summary>PyTorch snippet: cyclical_phase_loss &amp; strehl_ratio</summary>
+
+```python
+import math, torch
+
+def cyclical_phase_loss(pred: torch.Tensor, target: torch.Tensor) -> torch.Tensor:
+    return torch.mean(2.0 - 2.0 * torch.cos(target - pred))
+
+def strehl_ratio(pred: torch.Tensor, target: torch.Tensor) -> float:
+    zeros = torch.zeros((pred.shape[0], 1), device=pred.device, dtype=pred.dtype)
+    err = torch.cat([zeros, target - pred], dim=1)
+    return float(((torch.cos(err).sum(dim=1) ** 2 + torch.sin(err).sum(dim=1) ** 2) / 49.0).mean())
+```
+
+</details>
+
+---
+
 ## References
 
 - `[1]` O. Roy & M. Vetterli, "The effective rank: A measure of effective dimensionality," *Proc. EUSIPCO*, pp. 606–610 (2007).
